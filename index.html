@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Folio — PDF reader</title>
+  </head>
+  <body>
+    <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+      <symbol id="i-document" viewBox="0 0 24 24"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8Z M14 3v5h5 M9 12h6 M9 16h6"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z M3 9h18"/></symbol>
+      <symbol id="i-left" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></symbol>
+      <symbol id="i-right" viewBox="0 0 24 24"><path d="m10 6 6 6-6 6"/></symbol>
+      <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14 M12 5v14"/></symbol>
+      <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="m13 3 2.5 6.5L22 12l-6.5 2.5L13 21l-2.5-6.5L4 12l6.5-2.5Z M5 2v5 M2.5 4.5h5"/></symbol>
+      <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 1-8 8H5l-3 3V11a9 9 0 0 1 18 0Z M7 10h8 M7 14h5"/></symbol>
+      <symbol id="i-selection" viewBox="0 0 24 24"><path d="M7 4H4v3 M17 4h3v3 M20 17v3h-3 M7 20H4v-3 M9 8h6 M12 8v8 M9 16h6"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><path d="m9 3-.6 3-2 .9-2.6-1-2 3.5 2 2v2l-2 2 2 3.5 2.6-1 2 .9.6 3h4l.6-3 2-.9 2.6 1 2-3.5-2-2v-2l2-2-2-3.5-2.6 1-2-.9L13 3Z"/><circle cx="11" cy="12" r="3"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M12 19V5 m-6 6 6-6 6 6"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12 M18 6 6 18"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h4"/></symbol>
+      <symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 4h6v6 M20 4l-7 7 M10 20H4v-6 M4 20l7-7"/></symbol>
+      <symbol id="i-collapse" viewBox="0 0 24 24"><path d="M20 4l-7 7 M13 5v6h6 M4 20l7-7 M5 13h6v6"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 5C8 2 4 3 2 4v15c3-2 7-2 10 0 3-2 7-2 10 0V4c-2-1-6-2-10 1Z M12 5v14"/></symbol>
+      <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 4v16 M20 4v16 M7 12h10 m-7-3-3 3 3 3 m4-6 3 3-3 3"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 13A8.5 8.5 0 0 1 11 3.5 8.5 8.5 0 1 0 20.5 13Z"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2 M12 20v2 M2 12h2 M20 12h2 M5 5l1.5 1.5 M17.5 17.5 19 19 M5 19l1.5-1.5 M17.5 6.5 19 5"/></symbol>
+      <symbol id="i-contrast" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16Z" fill="currentColor"/></symbol>
+    </defs></svg>
+
+    <header class="toolbar">
+      <a class="brand" href="#" aria-label="Folio home"><span class="brand-mark"><svg><use href="#i-book"/></svg></span>Folio<span class="brand-tag">PDF READER</span></a>
+      <div class="toolbar-file"><svg class="icon"><use href="#i-document"/></svg><span id="filename">Your next good read</span></div>
+      <div class="toolbar-actions">
+        <button id="theme-toggle" class="icon-button" title="Switch to dark mode" aria-label="Switch to dark mode" aria-pressed="false"><svg class="icon"><use id="theme-icon" href="#i-moon"/></svg></button>
+        <button id="open" class="button secondary"><svg class="icon"><use href="#i-folder"/></svg>Open PDF<span class="shortcut">⌘ O</span></button>
+        <button id="settings" class="icon-button" title="AI settings" aria-label="AI settings"><svg class="icon"><use href="#i-settings"/></svg></button>
+      </div>
+      <input type="file" id="file" accept="application/pdf,.pdf" hidden />
+    </header>
+
+    <main class="workspace">
+      <section class="reader" aria-label="PDF reader">
+        <nav class="reader-toolbar" aria-label="Page and zoom controls">
+          <div class="control-group">
+            <button id="previous" class="icon-button" title="Previous page (h or ←)" aria-label="Previous page" disabled><svg class="icon"><use href="#i-left"/></svg></button>
+            <label class="page-control"><span class="sr-only">Page number</span><input id="page-number" type="number" min="1" value="1" disabled /><span id="page-count">of —</span></label>
+            <button id="next" class="icon-button" title="Next page (l or →)" aria-label="Next page" disabled><svg class="icon"><use href="#i-right"/></svg></button>
+          </div>
+          <span class="toolbar-divider"></span>
+          <div class="control-group zoom-controls">
+            <button id="zoom-out" class="icon-button" title="Zoom out" aria-label="Zoom out" disabled><svg class="icon"><use href="#i-minus"/></svg></button>
+            <output id="zoom-label">100%</output>
+            <button id="zoom-in" class="icon-button" title="Zoom in" aria-label="Zoom in" disabled><svg class="icon"><use href="#i-plus"/></svg></button>
+            <button id="fit" class="icon-button" title="Fit page width" aria-label="Fit page width" disabled><svg class="icon"><use href="#i-fit"/></svg></button>
+            <button id="recolor-pdf" class="icon-button" title="Recolor PDF for dark reading (Ctrl+R)" aria-label="Recolor PDF" aria-pressed="false"><svg class="icon"><use href="#i-contrast"/></svg></button>
+            <button id="pdf-fullscreen" class="icon-button" title="PDF fullscreen (F11)" aria-label="PDF fullscreen" aria-pressed="false" disabled><svg class="icon"><use id="fullscreen-icon" href="#i-expand"/></svg></button>
+          </div>
+          <span class="reader-hint">A little space to think.</span>
+        </nav>
+
+        <div id="reader-error" class="notice error" role="alert" hidden></div>
+        <div id="viewport" class="viewport" tabindex="0" aria-label="PDF page. Use j and k to scroll, h and l to change pages.">
+          <div id="empty" class="empty-state">
+            <span class="empty-icon"><svg><use href="#i-document"/></svg><span class="mini-sparkle">✦</span></span>
+            <span class="eyebrow">READ. ASK. UNDERSTAND.</span>
+            <h1>Make room for<br/>a closer look.</h1>
+            <p>Bring a PDF. Find the important parts.<br/>Let a little AI help connect the dots.</p>
+            <button id="open-empty" class="button primary"><svg class="icon"><use href="#i-folder"/></svg>Open a PDF</button>
+            <span class="empty-footnote">Your document stays on your device until you ask AI.</span>
+          </div>
+          <div id="page-shell" class="page-shell" hidden><div id="page" class="pdf-page"></div></div>
+        </div>
+        <footer class="reader-footer"><span id="document-status"><span class="status-dot"></span>Local by default</span><span id="selection-status">Select a passage to explore it</span></footer>
+        <div id="pdf-context-menu" class="pdf-context-menu" role="menu" aria-label="PDF AI actions" tabindex="-1" hidden>
+          <button role="menuitem" data-context-action="summarize" data-context-scope="selection"><svg class="icon"><use href="#i-sparkles"/></svg>Summarize selection</button>
+          <button role="menuitem" data-context-action="ask" data-context-scope="selection"><svg class="icon"><use href="#i-chat"/></svg>Ask selection</button>
+          <div class="context-separator" role="separator"></div>
+          <button role="menuitem" data-context-action="summarize" data-context-scope="page"><svg class="icon"><use href="#i-sparkles"/></svg>Summarize current page</button>
+          <button role="menuitem" data-context-action="ask" data-context-scope="page"><svg class="icon"><use href="#i-chat"/></svg>Ask current page</button>
+        </div>
+      </section>
+
+      <aside class="assistant" aria-label="AI reading assistant">
+        <div class="assistant-header"><div class="assistant-heading"><span class="assistant-mark"><svg class="icon"><use href="#i-sparkles"/></svg></span><div><h2>Reading companion</h2><p>A clearer view, one question at a time.</p></div></div><span class="small-label">AI</span></div>
+        <div class="assistant-body">
+          <div class="section-heading"><span>EXPLORE YOUR DOCUMENT</span><span class="section-line"></span></div>
+          <div class="action-section"><div class="scope-heading"><svg class="icon"><use href="#i-selection"/></svg><h3>Selected text</h3><span id="selection-badge" class="badge">No selection</span></div>
+            <div class="action-grid">
+              <button class="action-card" data-action="summarize" data-scope="selection" disabled><svg class="icon"><use href="#i-sparkles"/></svg><span>Summarize</span><small>The key takeaways</small></button>
+              <button class="action-card" data-action="ask" data-scope="selection" disabled><svg class="icon"><use href="#i-chat"/></svg><span>Ask selection</span><small>Go a little deeper</small></button>
+            </div>
+          </div>
+          <div class="action-section"><div class="scope-heading"><svg class="icon"><use href="#i-document"/></svg><h3>Current page</h3><span id="current-page-badge" class="badge">—</span></div>
+            <div class="action-grid">
+              <button class="action-card" data-action="summarize" data-scope="page" disabled><svg class="icon"><use href="#i-sparkles"/></svg><span>Summarize page</span><small>See the big picture</small></button>
+              <button class="action-card" data-action="ask" data-scope="page" disabled><svg class="icon"><use href="#i-chat"/></svg><span>Ask page</span><small>Put it into context</small></button>
+            </div>
+          </div>
+
+          <form id="question-form" class="question-box" hidden>
+            <div class="question-label"><label for="question">Your question</label><span id="question-source" class="badge"></span></div>
+            <textarea id="question" rows="3" maxlength="8000" placeholder="What would you like to understand?" required></textarea>
+            <div class="question-footer"><span>⌘ / Ctrl + Enter to send</span><button type="submit" id="send" class="send-button" aria-label="Send question"><svg class="icon"><use href="#i-arrow"/></svg></button></div>
+          </form>
+
+          <div id="ai-error" class="notice error" role="alert" hidden></div>
+          <div id="answer-area" class="answer-area">
+            <div id="assistant-empty" class="assistant-empty"><span class="orbit"><svg><use href="#i-sparkles"/></svg></span><h3>Good questions start here.</h3><p>Choose a page or highlight a passage.<br/>A summary or a new perspective awaits.</p></div>
+            <div id="answer-card" class="answer-card" hidden>
+              <div class="answer-heading"><span id="answer-kind">Summary</span><div class="answer-actions"><button id="expand-answer" class="icon-button" aria-label="Expand AI answer" title="Expand AI answer" disabled><svg class="icon"><use href="#i-expand"/></svg></button><button id="copy" class="icon-button" aria-label="Copy answer" title="Copy answer"><svg class="icon"><use href="#i-copy"/></svg></button></div></div>
+              <div id="answer-source" class="answer-source"></div>
+              <p id="asked-question" class="asked-question" hidden></p>
+              <div id="answer" class="answer" aria-live="polite"></div>
+            </div>
+          </div>
+        </div>
+        <footer class="assistant-footer"><button id="provider" class="provider-button"><span id="provider-dot" class="status-dot unconfigured"></span><span id="provider-label">Connect your AI provider</span><svg class="icon"><use href="#i-right"/></svg></button><p>Only the text you choose is sent to your provider.</p></footer>
+      </aside>
+    </main>
+
+    <dialog id="answer-dialog" aria-labelledby="answer-dialog-title">
+      <div class="expanded-heading"><h2 id="answer-dialog-title">AI response</h2><button id="close-answer" class="icon-button" aria-label="Close expanded answer" title="Close (Esc)" autofocus><svg class="icon"><use href="#i-close"/></svg></button></div>
+      <div id="expanded-error" class="notice error" role="alert" hidden></div>
+      <div id="expanded-content" class="expanded-content"></div>
+    </dialog>
+
+    <dialog id="settings-dialog" aria-labelledby="settings-title">
+      <form id="settings-form">
+        <div class="dialog-heading"><span class="assistant-mark"><svg class="icon"><use href="#i-settings"/></svg></span><button type="button" id="close-settings" class="icon-button" aria-label="Close settings"><svg class="icon"><use href="#i-close"/></svg></button></div>
+        <h2 id="settings-title">Make it your AI.</h2><p class="dialog-description">Connect any OpenAI-compatible provider.<br/>Settings are saved locally, including your API key (unencrypted).</p>
+        <label for="endpoint-url">Endpoint URL</label><input id="endpoint-url" name="endpoint_url" type="url" placeholder="https://api.example.com/v1" /><small>Base URL with version prefix, or full /chat/completions URL.<br/>Use HTTPS; HTTP is supported for localhost.</small>
+        <label for="api-key">API key <span class="optional">Optional for local models</span></label><input id="api-key" name="api_key" type="password" placeholder="Your provider’s API key" autocomplete="off" />
+        <label for="model">Model</label><input id="model" name="model" placeholder="Model name from your provider" />
+        <label for="appearance">Appearance</label><select id="appearance" name="theme"><option value="system">Follow system</option><option value="light">Light</option><option value="dark">Dark</option></select>
+        <label class="checkbox-setting" for="reopen-last-pdf"><input id="reopen-last-pdf" name="reopen_last_pdf" type="checkbox" checked /><span>Reopen last PDF on startup</span></label>
+        <div id="settings-error" class="notice error" role="alert" hidden></div>
+        <div class="dialog-footer"><button type="button" id="cancel-settings" class="button secondary">Cancel</button><button type="submit" class="button primary">Use these settings</button></div>
+      </form>
+    </dialog>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

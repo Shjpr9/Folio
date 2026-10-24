@@ -1,0 +1,6 @@
+{
+  "identifier": "main",
+  "description": "Local reader window only",
+  "windows": ["main"],
+  "permissions": ["core:default", "core:window:allow-set-fullscreen", "core:window:allow-is-fullscreen"]
+}

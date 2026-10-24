@@ -2,6 +2,8 @@
 
 A small Rust desktop PDF reader with macOS-inspired outline icons and controls. Tauri hosts a local PDF.js reader; the Rust backend handles AI requests.
 
+<img width="1917" height="1077" alt="Screenshot_25-Oct_01-03-20_28519" src="https://github.com/user-attachments/assets/1543eb1e-d4ec-4ede-90e0-571be070e42f" />
+
 ## Run
 
 Install Rust, Node.js 22.13+ (or 24+), and the [Tauri desktop prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS. On Linux, this includes WebKitGTK 4.1 and GTK 3.

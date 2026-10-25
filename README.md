@@ -24,6 +24,27 @@ The executable is written to `src-tauri/target/release/folio` (`folio.exe` on Wi
 
 Build a debug executable with `npm run tauri -- build --debug --no-bundle`. The result is at `src-tauri/target/debug/folio` and can run directly without Node.js or a development server. Compiled binaries are not included in this repository.
 
+## Releases
+
+The [build workflow](.github/workflows/build.yml) checks versions, runs JavaScript and Rust unit tests, and builds standalone executables on pushes and pull requests to `release`, and on `v*` tag pushes. Build artifacts cover Linux x86_64, Windows x86_64, and macOS Apple Silicon. Tag builds publish a GitHub Release only after all checks and builds succeed.
+
+The first version is **0.1.0**, tagged **v0.1.0**. Push the release branch and its annotated tag to start the first release:
+
+```sh
+git push -u origin release
+git push origin v0.1.0
+```
+
+For later versions, update `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json` together on `release`, commit, then create and push an annotated tag:
+
+```sh
+git tag -a v0.1.1 -m "Folio 0.1.1"
+git push origin release
+git push origin v0.1.1
+```
+
+The workflow rejects tags that do not match the project version. Download executables from the repository's GitHub Releases page. Extract `.tar.gz` archives before running `folio`; Windows downloads are `.exe` files. These are unsigned executables without installers. Linux requires the Tauri runtime libraries (including WebKitGTK 4.1 and GTK 3); Windows requires WebView2, and macOS may require approval in Privacy & Security for an unsigned app.
+
 ## Read and ask
 
 1. Open a local PDF with **Open PDF** or Cmd/Ctrl+O.

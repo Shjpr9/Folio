@@ -1,0 +1,112 @@
+name: Build and release
+
+on:
+  push:
+    branches: [release]
+    tags: ['v*']
+  pull_request:
+    branches: [release]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: npm ci
+      - name: Check versions and release tag
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const json = path => JSON.parse(readFileSync(path, 'utf8'));
+          const version = json('package.json').version;
+          const lock = json('package-lock.json');
+          assert.equal(json('src-tauri/tauri.conf.json').version, version);
+          assert.equal(lock.version, version);
+          assert.equal(lock.packages[''].version, version);
+          const cargo = readFileSync('src-tauri/Cargo.toml', 'utf8');
+          assert.equal(cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1], version);
+          const cargoLock = readFileSync('src-tauri/Cargo.lock', 'utf8');
+          assert.equal(cargoLock.match(/\[\[package\]\]\nname = "folio"\nversion = "([^"]+)"/)?.[1], version);
+          if (process.env.GITHUB_REF_TYPE === 'tag') {
+            assert.equal(process.env.GITHUB_REF_NAME, `v${version}`);
+          }
+          NODE
+      - run: npm test
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features
+
+  build:
+    needs: checks
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+          - os: windows-latest
+            platform: windows-x86_64
+          - os: macos-15
+            platform: macos-aarch64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev
+      - run: npm ci
+      - run: npm run tauri -- build --no-bundle -- --locked
+      - name: Package executable
+        run: |
+          mkdir -p release
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp src-tauri/target/release/folio.exe release/folio-${{ matrix.platform }}.exe
+          else
+            tar -czf release/folio-${{ matrix.platform }}.tar.gz -C src-tauri/target/release folio
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: folio-${{ matrix.platform }}
+          path: release/*
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: folio-*
+          path: release
+          merge-multiple: true
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" release/* --verify-tag --title "Folio $RELEASE_TAG" --generate-notes

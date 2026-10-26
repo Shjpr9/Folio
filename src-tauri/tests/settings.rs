@@ -170,3 +170,32 @@ fn startup_preference_and_last_path_survive_restart() {
     );
     assert_eq!(loaded["api_key"], "test-secret");
 }
+
+#[test]
+fn open_tabs_and_active_path_survive_restart() {
+    let directory = Directory::new();
+    let paths = vec![directory.0.join("one.pdf"), directory.0.join("two.pdf")];
+    let settings: Settings = serde_json::from_value(json!({
+        "open_pdf_paths": paths, "active_pdf_path": paths[1],
+        "reading_positions": [{"document_id":"one", "page":2, "scroll_top":120.0, "scroll_left":10.0, "zoom":1.5}]
+    })).unwrap();
+    save(&directory.0, &settings).unwrap();
+    let loaded = serde_json::to_value(load(&directory.0).unwrap()).unwrap();
+    assert_eq!(loaded["open_pdf_paths"], json!(paths));
+    assert_eq!(loaded["active_pdf_path"], json!(paths[1]));
+    assert_eq!(loaded["reading_positions"][0]["scroll_top"], 120.0);
+    assert_eq!(loaded["reading_positions"][0]["zoom"], 1.5);
+}
+
+#[test]
+fn invalid_tab_paths_and_scroll_positions_are_rejected() {
+    let directory = Directory::new();
+    for value in [
+        json!({"open_pdf_paths":["relative.pdf"]}),
+        json!({"active_pdf_path":"relative.pdf"}),
+        json!({"reading_positions":[{"document_id":"one", "page":1, "scroll_top":-1}]}),
+    ] {
+        let settings: Settings = serde_json::from_value(value).unwrap();
+        assert!(save(&directory.0, &settings).is_err());
+    }
+}

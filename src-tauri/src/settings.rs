@@ -24,6 +24,8 @@ pub struct Settings {
     pub reading_positions: Vec<ReadingPosition>,
     pub reopen_last_pdf: bool,
     pub last_pdf_path: Option<String>,
+    pub open_pdf_paths: Option<Vec<String>>,
+    pub active_pdf_path: Option<String>,
 }
 
 impl Default for Settings {
@@ -38,30 +40,50 @@ impl Default for Settings {
             reading_positions: Vec::new(),
             reopen_last_pdf: true,
             last_pdf_path: None,
+            open_pdf_paths: None,
+            active_pdf_path: None,
         }
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct ReadingPosition {
     pub document_id: String,
     pub page: u32,
+    pub path: Option<String>,
+    pub scroll_top: f64,
+    pub scroll_left: f64,
+    pub zoom: Option<f64>,
 }
 
 impl Settings {
     fn validate(&self) -> Result<(), String> {
         if self
             .last_pdf_path
-            .as_ref()
-            .is_some_and(|path| path.len() > 32768 || !Path::new(path).is_absolute())
+            .iter()
+            .chain(self.active_pdf_path.iter())
+            .chain(self.open_pdf_paths.iter().flatten())
+            .any(|path| path.len() > 32768 || !Path::new(path).is_absolute())
         {
-            return Err("The last PDF path must be an absolute local path.".into());
+            return Err("PDF paths must be absolute local paths.".into());
         }
         if self.reading_positions.len() > 100
             || self.reading_positions.iter().any(|position| {
                 position.document_id.is_empty()
                     || position.document_id.len() > 256
                     || position.page == 0
+                    || position
+                        .path
+                        .as_ref()
+                        .is_some_and(|path| path.len() > 32768 || !Path::new(path).is_absolute())
+                    || !position.scroll_top.is_finite()
+                    || position.scroll_top < 0.0
+                    || !position.scroll_left.is_finite()
+                    || position.scroll_left < 0.0
+                    || position
+                        .zoom
+                        .is_some_and(|zoom| !zoom.is_finite() || !(0.35..=2.5).contains(&zoom))
             })
         {
             return Err("Invalid saved reading positions.".into());
@@ -174,13 +196,36 @@ pub fn save_settings(
         .path()
         .app_config_dir()
         .map_err(|_| "Could not locate the app config directory.")?;
-    // Only the native file picker/startup restore can authorize a remembered path.
-    settings.last_pdf_path = session
-        .opened
-        .lock()
-        .map_err(|_| "Could not access the open PDF.")?
-        .as_ref()
-        .map(|path| path.to_string_lossy().into_owned())
-        .or_else(|| load(&directory).ok().and_then(|saved| saved.last_pdf_path));
+    // The frontend may only remember paths authorized by the picker or saved session.
+    if let Some(paths) = &settings.open_pdf_paths {
+        let authorized = session
+            .authorized
+            .lock()
+            .map_err(|_| "Could not access open PDFs.")?;
+        let saved = load(&directory).ok();
+        let saved_paths = saved
+            .as_ref()
+            .and_then(|settings| settings.open_pdf_paths.as_ref());
+        if paths.iter().any(|path| {
+            !authorized.contains(Path::new(path))
+                && !saved_paths.is_some_and(|paths| paths.contains(path))
+                && saved
+                    .as_ref()
+                    .and_then(|settings| settings.last_pdf_path.as_ref())
+                    != Some(path)
+        }) {
+            return Err("Choose a PDF with Open PDF before saving its path.".into());
+        }
+        if settings
+            .active_pdf_path
+            .as_ref()
+            .is_some_and(|path| !paths.contains(path))
+        {
+            return Err("The active PDF must be an open tab.".into());
+        }
+        settings.last_pdf_path = settings.active_pdf_path.clone();
+    } else {
+        settings.last_pdf_path = load(&directory).ok().and_then(|saved| saved.last_pdf_path);
+    }
     save(&directory, &settings)
 }

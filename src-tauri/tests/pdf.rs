@@ -1,4 +1,4 @@
-use folio::pdf::{read_pdf_file, startup_path};
+use folio::pdf::{read_pdf_file, startup_paths};
 use folio::settings::{save, Settings};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -54,16 +54,16 @@ fn rejects_missing_non_pdf_and_oversized_files() {
 #[test]
 fn restores_the_saved_pdf_but_never_opens_it_when_disabled() {
     let directory = Directory::new();
-    assert!(startup_path(&directory.0).unwrap().is_none());
+    assert!(startup_paths(&directory.0).unwrap().is_empty());
     let path = fixture();
     let mut settings = Settings::default();
     settings.last_pdf_path = Some(path.to_str().unwrap().into());
     save(&directory.0, &settings).unwrap();
-    assert_eq!(startup_path(&directory.0).unwrap(), Some(path));
+    assert_eq!(startup_paths(&directory.0).unwrap(), vec![path]);
     settings.reopen_last_pdf = false;
     settings.last_pdf_path = Some(directory.0.join("deleted.pdf").to_str().unwrap().into());
     save(&directory.0, &settings).unwrap();
-    assert!(startup_path(&directory.0).unwrap().is_none());
+    assert!(startup_paths(&directory.0).unwrap().is_empty());
 }
 
 #[test]
@@ -73,11 +73,43 @@ fn missing_startup_pdf_reports_a_notice_without_damaging_settings() {
     settings.last_pdf_path = Some(directory.0.join("missing.pdf").to_str().unwrap().into());
     settings.api_key = "test-key".into();
     save(&directory.0, &settings).unwrap();
-    assert!(startup_path(&directory.0)
+    assert!(read_pdf_file(&startup_paths(&directory.0).unwrap()[0])
         .unwrap_err()
         .contains("missing or inaccessible"));
     assert_eq!(
         folio::settings::load(&directory.0).unwrap().api_key,
         "test-key"
     );
+}
+
+#[test]
+fn startup_paths_migrate_the_last_pdf_and_preserve_tab_order_including_missing_files() {
+    let directory = Directory::new();
+    let mut settings = Settings::default();
+    settings.last_pdf_path = Some(fixture().to_str().unwrap().into());
+    save(&directory.0, &settings).unwrap();
+    assert_eq!(startup_paths(&directory.0).unwrap(), vec![fixture()]);
+    let missing = directory.0.join("missing.pdf");
+    settings.open_pdf_paths = Some(vec![
+        missing.to_str().unwrap().into(),
+        fixture().to_str().unwrap().into(),
+    ]);
+    save(&directory.0, &settings).unwrap();
+    assert_eq!(
+        startup_paths(&directory.0).unwrap(),
+        vec![missing, fixture()]
+    );
+    settings.open_pdf_paths = Some(vec![]);
+    save(&directory.0, &settings).unwrap();
+    assert!(startup_paths(&directory.0).unwrap().is_empty());
+}
+
+#[test]
+fn session_reads_only_paths_authorized_by_the_native_picker_or_restore() {
+    let session = folio::pdf::PdfSession::default();
+    let path = fixture();
+    assert!(session.selected_path(path.to_str().unwrap()).is_err());
+    session.authorize(path.clone()).unwrap();
+    assert_eq!(session.selected_path(path.to_str().unwrap()).unwrap(), path);
+    assert!(session.selected_path("/tmp/unselected.pdf").is_err());
 }

@@ -43,6 +43,7 @@
 
     <main class="workspace">
       <section class="reader" aria-label="PDF reader">
+        <nav id="pdf-tabs" class="pdf-tabs" role="tablist" aria-label="Open PDFs" hidden></nav>
         <nav class="reader-toolbar" aria-label="Page and zoom controls">
           <div class="control-group">
             <button id="previous" class="icon-button" title="Previous page (h or ←)" aria-label="Previous page" disabled><svg class="icon"><use href="#i-left"/></svg></button>
@@ -135,7 +136,7 @@
         <label for="api-key">API key <span class="optional">Optional for local models</span></label><input id="api-key" name="api_key" type="password" placeholder="Your provider’s API key" autocomplete="off" />
         <label for="model">Model</label><input id="model" name="model" placeholder="Model name from your provider" />
         <label for="appearance">Appearance</label><select id="appearance" name="theme"><option value="system">Follow system</option><option value="light">Light</option><option value="dark">Dark</option></select>
-        <label class="checkbox-setting" for="reopen-last-pdf"><input id="reopen-last-pdf" name="reopen_last_pdf" type="checkbox" checked /><span>Reopen last PDF on startup</span></label>
+        <label class="checkbox-setting" for="reopen-last-pdf"><input id="reopen-last-pdf" name="reopen_last_pdf" type="checkbox" checked /><span>Reopen open PDFs on startup</span></label>
         <div id="settings-error" class="notice error" role="alert" hidden></div>
         <div class="dialog-footer"><button type="button" id="cancel-settings" class="button secondary">Cancel</button><button type="submit" class="button primary">Use these settings</button></div>
       </form>

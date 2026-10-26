@@ -2,6 +2,8 @@
 
 A small Rust desktop PDF reader with macOS-inspired outline icons and controls. Tauri hosts a local PDF.js reader; the Rust backend handles AI requests.
 
+<img width="1917" height="1077" alt="Screenshot_25-Oct_01-03-20_28519" src="https://github.com/user-attachments/assets/1543eb1e-d4ec-4ede-90e0-571be070e42f" />
+
 ## Run
 
 Install Rust, Node.js 22.13+ (or 24+), and the [Tauri desktop prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS. On Linux, this includes WebKitGTK 4.1 and GTK 3.
@@ -65,9 +67,11 @@ Provider settings are saved when you click **Use these settings** and restored o
 
 Press **Ctrl+R** (**Cmd+R** on macOS), or click the half-filled circle next to the zoom controls, to toggle dark PDF recoloring. This gives pages a dark background and light text independently of the app theme, and the preference is remembered. It only changes the display: the file, selected text, and text sent to AI remain original. Images and diagram colors are also recolored; toggle it off when color accuracy matters.
 
-Folio automatically reopens the last PDF on startup at its saved page, using your saved zoom and recoloring preference. Disable **Reopen last PDF on startup** in Settings for an empty reader at launch. After updating from an older build, open a PDF once with **Open PDF** to remember its path. If the file is moved, deleted, or inaccessible, Folio shows a notice and lets you select another file normally.
+Opening another PDF adds a tab. Click a tab to switch documents or its faint × button to close it. The tab strip appears only when two or more PDFs are open. Opening a file that is already open switches to its existing tab.
 
-Reading positions are remembered for the 100 most recently opened PDFs, identified by a local hash of their contents, so selecting a renamed file preserves its position. The native desktop file picker remembers the original path; the document is not copied into the app's settings.
+Folio restores the open tabs and active document on startup, including each PDF's page, scroll position, and zoom. Disable **Reopen open PDFs on startup** in Settings for an empty reader at launch. Existing single-PDF sessions are restored too. If a file is moved, deleted, or inaccessible, Folio shows a notice and restores the other documents.
+
+Reading positions are remembered for the 100 most recently opened PDFs, identified by a local hash of their contents, with file paths distinguishing separate copies in different tabs. Selecting a renamed file falls back to its content history. The native desktop file picker remembers the original path; the document is not copied into the app's settings.
 
 The question box and each answer show their source page. Navigating after choosing **Ask** keeps that original source, even if the displayed page changes. Select **Ask page** again to ask about the new page.
 
@@ -92,7 +96,7 @@ Include your provider's version prefix. HTTPS is required except for HTTP on loo
 - Endpoint URL, API key, model, appearance, and chosen zoom are saved in `settings.json` in Tauri's app config directory. On Linux, this is normally `~/.config/local.folio.reader/settings.json` (or under `$XDG_CONFIG_HOME`). The API key is stored **unencrypted**. On Linux/macOS, the app creates the directory with owner-only `0700` permissions and the file with `0600` permissions; Windows uses the user profile directory's inherited permissions. Treat the file and any backups as credentials.
 - Settings writes replace the file atomically. Failed writes are reported, and the previous settings file is retained. Saved changes survive app close; changes typed into the settings dialog must be applied first.
 - If saved settings cannot be read, automatic theme/zoom saves are blocked to protect the existing credentials. Re-enter and apply Settings explicitly to replace the unreadable file.
-- The last opened PDF's absolute path and the startup reopening option are saved with your settings. PDF contents, questions, and answers are not copied or saved. Automatic reopening reads the local file only; it never sends text to AI. The application does not store credentials in browser localStorage.
+- Open PDFs' absolute paths, the active tab, and the startup reopening option are saved with your settings. PDF contents, questions, and answers are not copied or saved. Automatic reopening reads the local file only; it never sends text to AI. The application does not store credentials in browser localStorage.
 - Text PDFs are supported. Scanned/image-only pages can be viewed but need OCR before AI actions are available. Password-protected PDFs must be unlocked first.
 - PDFs are limited to 100 MiB; AI source text to 120,000 characters; questions to 8,000 characters; API responses to 2 MiB. Model-specific context limits still apply.
 - No OCR, annotation editing, saved chats, streaming, or installer signing.

@@ -1,4 +1,5 @@
 import './style.css';
+import MarkdownIt from 'markdown-it';
 import { getDocument, GlobalWorkerOptions, TextLayer } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { captureContext, captureAvailableContexts, pageText, selectionText } from './context.js';
@@ -6,11 +7,16 @@ import { createSettingsStore, defaultSettings, documentKey, effectiveTheme, last
 import { handleReaderKey, handleRecolorKey, handleFullscreenKey } from './keyboard.js';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
+const markdown = new MarkdownIt({ html: false }).disable('image');
 const $ = id => document.getElementById(id);
 const actions = [...document.querySelectorAll('[data-action]')];
 const menuActions = [...document.querySelectorAll('[data-context-action]')];
 let menuSources = null;
-const reader = { pdf: null, documentId: '', page: 1, text: '', selection: '', scale: 1, rendering: false };
+let reader = { pdf: null, documentId: '', page: 1, text: '', selection: '', scale: 1, rendering: false };
+const tabs = [];
+let restoringTabs = false;
+let positionTimer;
+let closeSaveFailed = false;
 let settings = { ...defaultSettings };
 const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
 const settingsStore = createSettingsStore((command, args) => {
@@ -61,7 +67,7 @@ function updateControls() {
   $('pdf-fullscreen').disabled = !readerFullscreen && !ready;
 }
 
-async function renderPage(number, scale = reader.scale, rememberZoom = false) {
+async function renderPage(number, scale = reader.scale, rememberZoom = false, position = null) {
   if (!reader.pdf || !Number.isInteger(number) || number < 1 || number > reader.pdf.numPages) {
     $('page-number').value = reader.page;
     return;
@@ -112,13 +118,13 @@ async function renderPage(number, scale = reader.scale, rememberZoom = false) {
     reader.page = number;
     reader.scale = scale;
     reader.text = pageText(content);
-    $('viewport').scrollTop = 0;
+    $('viewport').scrollTop = position?.scroll_top ?? 0;
+    $('viewport').scrollLeft = position?.scroll_left ?? 0;
+    reader.scroll_top = $('viewport').scrollTop;
+    reader.scroll_left = $('viewport').scrollLeft;
     $('document-status').textContent = reader.text.trim() ? `Page ${number} of ${reader.pdf.numPages} · Text ready` : `Page ${number} · No text layer (OCR needed)`;
-    if (window.__TAURI__?.core) {
-      const patch = { reading_positions: rememberPage(settings.reading_positions, reader.documentId, number) };
-      if (rememberZoom) patch.zoom = scale;
-      saveSettings(patch).catch(error => errorAt('reader-error', error));
-    }
+    if (rememberZoom) settings = { ...settings, zoom: scale };
+    saveSession().catch(error => errorAt('reader-error', error));
   } catch (error) {
     if (version !== renderVersion || error.name === 'RenderingCancelledException' || error.name === 'AbortException') return;
     reader.text = '';
@@ -131,41 +137,121 @@ async function renderPage(number, scale = reader.scale, rememberZoom = false) {
   }
 }
 
-async function openFile(file, native = false) {
+function updateTabs() {
+  $('pdf-tabs').hidden = tabs.length < 2;
+  $('pdf-tabs').replaceChildren(...tabs.map(tab => {
+    const item = document.createElement('div');
+    item.className = 'pdf-tab';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'pdf-tab-name';
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-selected', String(tab === reader));
+    button.tabIndex = tab === reader ? 0 : -1;
+    button.setAttribute('aria-controls', 'viewport');
+    button.textContent = tab.name;
+    button.title = tab.path || tab.name;
+    button.addEventListener('click', () => activateTab(tab));
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'pdf-tab-close';
+    close.setAttribute('aria-label', `Close ${tab.name}`);
+    close.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>';
+    close.addEventListener('click', () => closeTab(tab));
+    item.append(button, close);
+    return item;
+  }));
+}
+
+function capturePosition() {
+  if (!reader.pdf || reader.rendering) return;
+  reader.scroll_top = $('viewport').scrollTop;
+  reader.scroll_left = $('viewport').scrollLeft;
+}
+
+function saveSession() {
+  if (!window.__TAURI__?.core || restoringTabs) return Promise.resolve();
+  let positions = settings.reading_positions;
+  for (const tab of tabs) positions = rememberPage(positions, tab.documentId, tab.page, {
+    path: tab.path, scroll_top: tab.scroll_top ?? 0, scroll_left: tab.scroll_left ?? 0, zoom: tab.scale,
+  });
+  return saveSettings({ reading_positions: positions, open_pdf_paths: tabs.filter(tab => tab.path).map(tab => tab.path), active_pdf_path: reader.path ?? null });
+}
+
+async function activateTab(tab, cancelLoad = true) {
+  capturePosition();
+  if (cancelLoad) {
+    ++loadVersion;
+    const task = loadingTask;
+    loadingTask = null;
+    task?.destroy();
+  }
+  hideContextMenu();
+  if ($('answer-dialog').open) $('answer-dialog').close();
+  ++aiVersion;
+  busy = false;
+  pendingQuestion = null;
+  $('question-form').hidden = true;
+  $('question').value = '';
+  $('answer-card').hidden = true;
+  $('assistant-empty').hidden = false;
+  $('answer').textContent = '';
+  $('answer').classList.remove('loading');
+  errorAt('ai-error');
+  reader = tab;
+  $('filename').textContent = tab.name;
+  updateTabs();
+  // Hide the previous document until this tab finishes rendering.
+  $('page-shell').hidden = true;
+  await renderPage(tab.page, tab.scale, false, { scroll_top: tab.scroll_top, scroll_left: tab.scroll_left });
+}
+
+async function closeTab(tab) {
+  capturePosition();
+  const index = tabs.indexOf(tab);
+  if (index < 0) return;
+  tabs.splice(index, 1);
+  if (tab === reader) {
+    if (tabs.length) await activateTab(tabs[Math.min(index, tabs.length - 1)]);
+    else {
+      ++loadVersion;
+      ++renderVersion;
+      ++aiVersion;
+      busy = false;
+      renderTask?.cancel();
+      textLayer?.cancel();
+      reader = { pdf: null, documentId: '', page: 1, text: '', selection: '', scale: settings.zoom ?? 1, rendering: false };
+      $('filename').textContent = 'No document open';
+      $('page-shell').hidden = true;
+      $('empty').hidden = false;
+      $('document-status').textContent = 'Local by default';
+      $('answer-card').hidden = true;
+      $('question-form').hidden = true;
+      updateControls();
+    }
+  }
+  updateTabs();
+  await tab.pdf.destroy();
+  saveSession().catch(error => errorAt('reader-error', error));
+}
+
+async function openFile(file, path = null) {
   if (!file) return;
   await settingsReady;
   if (file.size > 100 * 1024 * 1024) return errorAt('reader-error', 'Please open a PDF smaller than 100 MiB.');
-  hideContextMenu();
-  if ($('answer-dialog').open) $('answer-dialog').close();
   const version = ++loadVersion;
-  ++renderVersion;
-  ++aiVersion;
-  busy = false;
-  renderTask?.cancel();
-  textLayer?.cancel();
-  await loadingTask?.destroy();
-  if (version !== loadVersion) return;
-  reader.pdf = null;
-  reader.documentId = '';
-  reader.text = '';
-  reader.selection = '';
-  reader.rendering = true;
-  pendingQuestion = null;
-  $('question-form').hidden = true;
-  $('answer-card').hidden = true;
-  $('assistant-empty').hidden = false;
-  $('page-shell').hidden = true;
-  $('empty').hidden = false;
-  $('filename').textContent = file.name;
-  $('document-status').textContent = 'Opening PDF…';
-  errorAt('reader-error');
-  errorAt('ai-error');
-  updateControls();
+  const previousTask = loadingTask;
+  loadingTask = null;
+  await previousTask?.destroy();
+  let pdf;
+  let task;
   try {
     const data = new Uint8Array(await file.arrayBuffer());
     const documentId = await documentKey(data);
     if (version !== loadVersion) return;
-    const task = getDocument({
+    const existing = tabs.find(tab => path ? tab.path === path : !tab.path && tab.name === file.name && tab.documentId === documentId);
+    if (existing) { await activateTab(existing, false); return; }
+    task = getDocument({
       data,
       cMapUrl: '/pdf-assets/cmaps/', cMapPacked: true,
       standardFontDataUrl: '/pdf-assets/standard_fonts/', wasmUrl: '/pdf-assets/wasm/',
@@ -174,41 +260,61 @@ async function openFile(file, native = false) {
     loadingTask = task;
     // shortcut: encrypted documents are rejected; add a password dialog when encrypted PDFs are needed.
     task.onPassword = () => { task.destroy(); errorAt('reader-error', 'Password-protected PDFs are not supported yet. Open an unlocked copy.'); };
-    const pdf = await task.promise;
+    pdf = await task.promise;
     if (version !== loadVersion) { await pdf.destroy(); return; }
-    reader.pdf = pdf;
-    reader.documentId = documentId;
-    reader.page = lastPage(settings.reading_positions, reader.documentId, pdf.numPages);
-    const firstPage = await pdf.getPage(reader.page);
+    const saved = settings.reading_positions.find(position => position.document_id === documentId && (position.path ?? null) === path)
+      ?? settings.reading_positions.findLast(position => position.document_id === documentId);
+    const page = lastPage(saved ? [saved] : [], saved?.document_id ?? documentId, pdf.numPages);
+    const firstPage = await pdf.getPage(page);
+    if (version !== loadVersion) { await pdf.destroy(); return; }
     const width = firstPage.getViewport({ scale: 1 }).width;
-    const scale = settings.zoom ?? Math.max(0.35, Math.min(1.25, ($('viewport').clientWidth - 64) / width));
-    if (native) await window.__TAURI__.core.invoke('remember_pdf');
-    if (version !== loadVersion) return;
-    await renderPage(reader.page, scale);
+    const scale = saved?.zoom ?? settings.zoom ?? Math.max(0.35, Math.min(1.25, ($('viewport').clientWidth - 64) / width));
+    const tab = { pdf, documentId, name: file.name, path, page, scale, text: '', selection: '', rendering: false,
+      scroll_top: saved?.scroll_top ?? 0, scroll_left: saved?.scroll_left ?? 0 };
+    tabs.push(tab);
+    loadingTask = null;
+    await activateTab(tab, false);
   } catch (error) {
     if (version !== loadVersion) return;
-    if (!$('reader-error').textContent) errorAt('reader-error', error.name === 'PasswordException' ? 'Open an unlocked copy of this PDF.' : `Could not open this PDF. ${error.message || ''}`);
-    $('document-status').textContent = 'Could not open document';
+    await task?.destroy();
+    errorAt('reader-error', error.name === 'PasswordException' ? 'Open an unlocked copy of this PDF.' : `Could not open this PDF. ${error.message || ''}`);
   } finally {
-    if (version === loadVersion) {
-      reader.rendering = false;
-      updateControls();
-    }
+    if (version === loadVersion) loadingTask = null;
   }
 }
 
 async function openNativePdf(restore = false) {
   if (nativeOpening) return;
   nativeOpening = true;
+  restoringTabs = restore;
+  const failures = [];
   try {
     await settingsReady;
-    const name = await window.__TAURI__.core.invoke(restore ? 'restore_pdf' : 'choose_pdf');
-    if (!name) return;
-    const bytes = await window.__TAURI__.core.invoke('read_selected_pdf');
-    await openFile(new File([new Uint8Array(bytes)], name, { type: 'application/pdf' }), true);
+    const activePath = settings.active_pdf_path;
+    const files = restore ? await window.__TAURI__.core.invoke('restore_pdf')
+      : [await window.__TAURI__.core.invoke('choose_pdf')].filter(Boolean);
+    for (const file of files) {
+      try {
+        const existing = tabs.find(tab => tab.path === file.path);
+        if (existing) { await activateTab(existing); continue; }
+        const bytes = await window.__TAURI__.core.invoke('read_selected_pdf', { path: file.path });
+        const count = tabs.length;
+        await openFile(new File([new Uint8Array(bytes)], file.name, { type: 'application/pdf' }), file.path);
+        if (tabs.length === count) failures.push(file.name);
+      } catch (error) { failures.push(`${file.name}: ${error}`); }
+    }
+    if (restore) {
+      const active = tabs.find(tab => tab.path === activePath);
+      if (active) await activateTab(active);
+    }
   } catch (error) {
-    errorAt('reader-error', `${restore ? 'Could not reopen the last PDF.' : 'Could not open the PDF.'} ${error}`);
-  } finally { nativeOpening = false; }
+    failures.push(String(error));
+  } finally {
+    restoringTabs = false;
+    nativeOpening = false;
+    if (tabs.length) await saveSession().catch(error => failures.push(String(error)));
+    if (failures.length) errorAt('reader-error', `${restore ? 'Could not reopen PDFs' : 'Could not open PDF'}: ${failures.join('; ')}`);
+  }
 }
 
 function requestOpenPdf() {
@@ -287,7 +393,7 @@ async function runAI(action, source, question = '', popup = false) {
   updateControls();
   try {
     const answer = await window.__TAURI__.core.invoke('complete', { request: { ...settings, action, text: source.text, question } });
-    if (version === aiVersion) $('answer').textContent = answer;
+    if (version === aiVersion) $('answer').innerHTML = markdown.render(answer);
   } catch (error) {
     if (version === aiVersion) {
       $('answer').textContent = '';
@@ -411,7 +517,7 @@ if (desktopWindow) {
 }
 systemTheme.addEventListener('change', () => { if (settings.theme === 'system') applySettings(); });
 $('copy').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText($('answer').textContent); $('copy').title = 'Copied'; }
+  try { await navigator.clipboard.writeText($('answer').innerText); $('copy').title = 'Copied'; }
   catch { errorAt($('answer-dialog').open ? 'expanded-error' : 'ai-error', 'Clipboard access is unavailable. Select and copy the answer text.'); }
 });
 function showAnswerPopup(includeQuestion = false) {
@@ -498,5 +604,38 @@ document.addEventListener('keydown', event => {
 applySettings();
 const settingsReady = restoreSettings();
 settingsReady.then(() => {
-  if (window.__TAURI__?.core && settings.reopen_last_pdf && settings.last_pdf_path) openNativePdf(true);
+  if (window.__TAURI__?.core && settings.reopen_last_pdf && (settings.open_pdf_paths?.length || (settings.open_pdf_paths === null && settings.last_pdf_path))) openNativePdf(true);
+});
+
+$('pdf-tabs').addEventListener('keydown', event => {
+  if (event.target.getAttribute('role') !== 'tab') return;
+  const index = tabs.indexOf(reader);
+  const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length
+    : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length
+    : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : null;
+  if (next === null) return;
+  event.preventDefault();
+  activateTab(tabs[next]);
+  $('pdf-tabs').querySelector('[aria-selected="true"]').focus();
+});
+$('viewport').addEventListener('scroll', () => {
+  if (!reader.pdf || reader.rendering) return;
+  capturePosition();
+  clearTimeout(positionTimer);
+  positionTimer = setTimeout(() => saveSession().catch(error => errorAt('reader-error', error)), 200);
+});
+if (desktopWindow?.onCloseRequested) desktopWindow.onCloseRequested(async event => {
+  event.preventDefault();
+  if (closeSaveFailed) { await desktopWindow.destroy(); return; }
+  clearTimeout(positionTimer);
+  capturePosition();
+  try {
+    await settingsReady;
+    if (tabs.length) await saveSession();
+    await settingsStore.flush();
+    await desktopWindow.destroy();
+  } catch (error) {
+    closeSaveFailed = true;
+    errorAt('reader-error', `${error} Close again to exit without saving the latest position.`);
+  }
 });

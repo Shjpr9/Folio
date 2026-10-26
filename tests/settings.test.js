@@ -93,3 +93,26 @@ test('document identity follows file contents rather than its name or embedded P
   assert.equal(await documentKey(bytes), await documentKey(bytes.slice()));
   assert.notEqual(await documentKey(bytes), await documentKey(new TextEncoder().encode('abd')));
 });
+
+test('separate paths keep independent positions even for identical PDFs', () => {
+  let positions = rememberPage([], 'same-content', 2, { path: '/one.pdf', scroll_top: 120, zoom: 1.5 });
+  positions = rememberPage(positions, 'same-content', 3, { path: '/two.pdf', scroll_top: 40, zoom: 1 });
+  positions = rememberPage(positions, 'same-content', 4, { path: '/one.pdf', scroll_top: 80, zoom: 2 });
+  assert.equal(positions.length, 2);
+  assert.equal(positions.find(position => position.path === '/one.pdf').page, 4);
+  assert.equal(positions.find(position => position.path === '/two.pdf').page, 3);
+  assert.equal(positions.find(position => position.path === '/one.pdf').scroll_top, 80);
+});
+
+test('shutdown flush waits for the queued settings write', async () => {
+  let release;
+  const store = createSettingsStore(() => new Promise(resolve => { release = resolve; }));
+  const write = store.save({ theme: 'dark' });
+  let finished = false;
+  const flush = store.flush().then(() => { finished = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(finished, false);
+  release();
+  await Promise.all([write, flush]);
+  assert.equal(finished, true);
+});

@@ -35,51 +35,61 @@ pub fn read_pdf_file(path: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-pub fn startup_path(directory: &Path) -> Result<Option<PathBuf>, String> {
+pub fn startup_paths(directory: &Path) -> Result<Vec<PathBuf>, String> {
     let settings = crate::settings::load(directory)?;
     if !settings.reopen_last_pdf {
-        return Ok(None);
+        return Ok(Vec::new());
     }
-    let Some(path) = settings.last_pdf_path.map(PathBuf::from) else {
-        return Ok(None);
-    };
-    check_file(&path)?;
-    Ok(Some(path))
+    Ok(settings
+        .open_pdf_paths
+        .unwrap_or_else(|| settings.last_pdf_path.into_iter().collect())
+        .into_iter()
+        .map(PathBuf::from)
+        .collect())
 }
 
-#[cfg(feature = "desktop")]
 #[derive(Default)]
 pub struct PdfSession {
-    selected: std::sync::Mutex<Option<PathBuf>>,
-    pub opened: std::sync::Mutex<Option<PathBuf>>,
+    pub authorized: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
 }
 
-#[cfg(feature = "desktop")]
+#[derive(serde::Serialize)]
+pub struct PdfFile {
+    name: String,
+    path: String,
+}
+
 impl PdfSession {
-    fn select(&self, path: PathBuf) -> Result<String, String> {
-        check_file(&path)?;
-        let path = path
-            .canonicalize()
-            .map_err(|_| "Could not locate the selected PDF.")?;
-        if path.to_str().is_none() {
-            return Err("The PDF path is not valid Unicode. Rename it and try again.".into());
-        }
+    pub fn authorize(&self, path: PathBuf) -> Result<PdfFile, String> {
         let name = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("document.pdf")
             .to_owned();
-        *self
-            .selected
+        let text = path
+            .to_str()
+            .ok_or("The PDF path is not valid Unicode. Rename it and try again.")?
+            .to_owned();
+        self.authorized
             .lock()
-            .map_err(|_| "Could not select the PDF.")? = Some(path);
-        Ok(name)
+            .map_err(|_| "Could not select the PDF.")?
+            .insert(path);
+        Ok(PdfFile { name, path: text })
+    }
+
+    pub fn selected_path(&self, path: &str) -> Result<PathBuf, String> {
+        self.authorized
+            .lock()
+            .map_err(|_| "Could not access the selected PDF.")?
+            .get(Path::new(path))
+            .cloned()
+            .ok_or("Choose a PDF with Open PDF first.".into())
     }
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-pub async fn choose_pdf(session: tauri::State<'_, PdfSession>) -> Result<Option<String>, String> {
+pub async fn choose_pdf(session: tauri::State<'_, PdfSession>) -> Result<Option<PdfFile>, String> {
     let path = tauri::async_runtime::spawn_blocking(|| {
         rfd::FileDialog::new()
             .set_title("Open PDF")
@@ -88,7 +98,14 @@ pub async fn choose_pdf(session: tauri::State<'_, PdfSession>) -> Result<Option<
     })
     .await
     .map_err(|_| "Could not open the file picker.")?;
-    path.map(|path| session.select(path)).transpose()
+    path.map(|path| {
+        check_file(&path)?;
+        let path = path
+            .canonicalize()
+            .map_err(|_| "Could not locate the selected PDF.")?;
+        session.authorize(path)
+    })
+    .transpose()
 }
 
 #[cfg(feature = "desktop")]
@@ -96,46 +113,27 @@ pub async fn choose_pdf(session: tauri::State<'_, PdfSession>) -> Result<Option<
 pub fn restore_pdf(
     app: tauri::AppHandle,
     session: tauri::State<'_, PdfSession>,
-) -> Result<Option<String>, String> {
+) -> Result<Vec<PdfFile>, String> {
     use tauri::Manager;
     let directory = app
         .path()
         .app_config_dir()
         .map_err(|_| "Could not locate the app config directory.")?;
-    startup_path(&directory)?
-        .map(|path| session.select(path))
-        .transpose()
+    startup_paths(&directory)?
+        .into_iter()
+        .map(|path| session.authorize(path))
+        .collect()
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn read_selected_pdf(
+    path: String,
     session: tauri::State<'_, PdfSession>,
 ) -> Result<tauri::ipc::Response, String> {
-    let path = session
-        .selected
-        .lock()
-        .map_err(|_| "Could not access the selected PDF.")?
-        .clone()
-        .ok_or("Choose a PDF first.")?;
+    let path = session.selected_path(&path)?;
     let bytes = tauri::async_runtime::spawn_blocking(move || read_pdf_file(&path))
         .await
         .map_err(|_| "Could not read the PDF.")??;
     Ok(tauri::ipc::Response::new(bytes))
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub fn remember_pdf(session: tauri::State<'_, PdfSession>) -> Result<(), String> {
-    let path = session
-        .selected
-        .lock()
-        .map_err(|_| "Could not access the selected PDF.")?
-        .clone()
-        .ok_or("Choose a PDF first.")?;
-    *session
-        .opened
-        .lock()
-        .map_err(|_| "Could not remember the PDF.")? = Some(path);
-    Ok(())
 }

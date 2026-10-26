@@ -7,8 +7,7 @@ fn main() {
             folio::settings::save_settings,
             folio::pdf::choose_pdf,
             folio::pdf::restore_pdf,
-            folio::pdf::read_selected_pdf,
-            folio::pdf::remember_pdf
+            folio::pdf::read_selected_pdf
         ])
         .run(tauri::generate_context!())
         .expect("could not start Folio");

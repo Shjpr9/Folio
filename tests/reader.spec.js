@@ -36,15 +36,17 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     window.sentRequests = [];
     window.nativeRestores = 0;
-    window.__TAURI__ = { core: { invoke: async (command, args) => {
-      if (command === 'choose_pdf') return null;
+    window.__TAURI__ = { window: { getCurrentWindow: () => window.testDesktopWindow }, core: { invoke: async (command, args) => {
+      if (command === 'choose_pdf') return window.pickFiles?.shift() ?? null;
       if (command === 'restore_pdf') {
         window.nativeRestores++;
         if (window.restoreError) throw 'The PDF is missing or inaccessible.';
-        return window.reopenFixture ? 'reading.pdf' : null;
+        return window.restoreFiles ?? (window.reopenFixture ? [{ name: 'reading.pdf', path: '/test/reading.pdf' }] : []);
       }
-      if (command === 'read_selected_pdf') return new Uint8Array(window.reopenFixture).buffer;
-      if (command === 'remember_pdf') return;
+      if (command === 'read_selected_pdf') {
+        if (window.missingPath === args.path) throw 'The PDF is missing or inaccessible.';
+        return new Uint8Array(window.pdfBytes ?? window.reopenFixture).buffer;
+      }
       if (command === 'load_settings') {
         if (sessionStorage.getItem('fail-load')) throw 'Could not read saved settings.';
         return JSON.parse(sessionStorage.getItem('desktop-settings') || '{}');
@@ -58,9 +60,30 @@ test.beforeEach(async ({ page }) => {
       window.sentRequests.push({ command, ...args });
       if (window.failAI) throw 'Provider returned HTTP 401.';
       if (window.holdAI) await new Promise(resolve => { window.releaseAI = resolve; });
-      return 'A useful response about this source.';
+      return window.aiAnswer ?? 'A useful response about this source.';
     } } };
   });
+});
+
+test('AI answers render safe Markdown in the sidebar and expanded popup', async ({ page }) => {
+  await openPDF(page);
+  await configure(page);
+  await page.evaluate(() => {
+    window.aiAnswer = '# Summary\n\n**Important** and *helpful*.\n\n- First\n- Second\n\n```js\nconst value = "<tag>";\n```\n\n| Topic | Result |\n| --- | --- |\n| Reading | Useful |\n\n[Source](https://example.com)\n\n<script>window.markdownExecuted = true</script>\n\n<img src=x onerror="window.markdownExecuted = true">\n\n[Unsafe](javascript:alert(1))';
+  });
+  await page.locator('[data-scope="page"][data-action="summarize"]').click();
+  const answer = page.locator('#answer');
+  await expect(answer.locator('h1')).toHaveText('Summary');
+  await expect(answer.locator('strong')).toHaveText('Important');
+  await expect(answer.locator('em')).toHaveText('helpful');
+  await expect(answer.locator('li')).toHaveText(['First', 'Second']);
+  await expect(answer.locator('pre code')).toHaveText('const value = "<tag>";\n');
+  await expect(answer.locator('td')).toHaveText(['Reading', 'Useful']);
+  await expect(answer.getByRole('link', { name: 'Source' })).toHaveAttribute('href', 'https://example.com');
+  await expect(answer.locator('script, img, a[href^="javascript:"]')).toHaveCount(0);
+  expect(await page.evaluate(() => window.markdownExecuted)).toBeUndefined();
+  await page.getByRole('button', { name: 'Expand AI answer' }).click();
+  await expect(page.locator('#answer-dialog #answer h1')).toHaveText('Summary');
 });
 
 test('startup reopens the last PDF at its saved page and can be disabled', async ({ page }) => {
@@ -76,7 +99,7 @@ test('startup reopens the last PDF at its saved page and can be disabled', async
   await expect(page.locator('#document-status')).toContainText('Page 2 of 3');
   await expect(page.locator('.textLayer')).toContainText('A new perspective');
   await page.getByRole('button', { name: 'AI settings', exact: true }).click();
-  await page.getByLabel('Reopen last PDF on startup').uncheck();
+  await page.getByLabel('Reopen open PDFs on startup').uncheck();
   await page.getByRole('button', { name: 'Use these settings' }).click();
   await expect(page.getByRole('dialog')).not.toBeVisible();
   await page.reload();
@@ -424,4 +447,175 @@ test('j/k scroll a long answer popup without changing the PDF or question text',
   await page.getByRole('menuitem', { name: 'Ask current page' }).click();
   await page.locator('#answer-dialog').getByLabel('Your question').pressSequentially('jk');
   await expect(page.getByLabel('Your question')).toHaveValue('jk');
+});
+
+test('PDF tabs keep independent pages and zoom, deduplicate opens, and hide below two tabs', async ({ page }) => {
+  await openPDF(page);
+  await expect(page.getByRole('tablist')).toBeHidden();
+  await page.locator('#next').click();
+  await expect(page.locator('#page-number')).toHaveValue('2');
+  await page.locator('#zoom-in').click();
+  await expect(page.locator('#next')).toBeEnabled();
+  const zoom = await page.locator('#zoom-label').textContent();
+  const second = { name: 'second.pdf', mimeType: 'application/pdf', buffer: readFileSync(fixture) };
+  await page.locator('#file').setInputFiles(second);
+  await expect(page.getByRole('tablist')).toBeVisible();
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  await page.locator('#next').click();
+  await expect(page.locator('#page-number')).toHaveValue('3');
+  await page.getByRole('tab', { name: 'reading.pdf', exact: true }).click();
+  await expect(page.locator('#page-number')).toHaveValue('2');
+  await expect(page.locator('#zoom-label')).toHaveText(zoom);
+  await page.locator('#file').setInputFiles(second);
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  await expect(page.locator('#page-number')).toHaveValue('3');
+  await page.getByRole('button', { name: 'Close second.pdf', exact: true }).click();
+  await expect(page.getByRole('tablist')).toBeHidden();
+  await expect(page.locator('#filename')).toHaveText('reading.pdf');
+  await expect(page.locator('#page-number')).toHaveValue('2');
+});
+
+test('an invalid new PDF leaves the current PDF usable', async ({ page }) => {
+  await openPDF(page);
+  await page.locator('#file').setInputFiles({ name: 'broken.pdf', mimeType: 'application/pdf', buffer: Buffer.from('broken') });
+  await expect(page.locator('#reader-error')).toContainText('Could not open');
+  await expect(page.locator('#filename')).toHaveText('reading.pdf');
+  await page.locator('#next').click();
+  await expect(page.locator('#page-number')).toHaveValue('2');
+});
+
+
+test('native tabs restore independent positions, active tab, and closed-tab removal', async ({ page }) => {
+  const bytes = [...readFileSync(fixture)];
+  const files = [{ name: 'one.pdf', path: '/test/one.pdf' }, { name: 'two.pdf', path: '/test/two.pdf' }];
+  await page.addInitScript(({ bytes, files }) => {
+    window.pdfBytes = bytes;
+    window.pickFiles = [...files];
+    const saved = JSON.parse(sessionStorage.getItem('desktop-settings') || '{}');
+    window.restoreFiles = (saved.open_pdf_paths ?? []).map(path => files.find(file => file.path === path));
+  }, { bytes, files });
+  await page.goto('/');
+  await page.locator('#open').click();
+  await expect(page.locator('#next')).toBeEnabled();
+  await page.locator('#next').click();
+  await expect(page.locator('#page-number')).toHaveValue('2');
+  await page.locator('#open').click();
+  await expect(page.getByRole('tab', { name: 'two.pdf', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#next')).toBeEnabled();
+  await page.locator('#page-number').fill('3');
+  await page.locator('#page-number').press('Enter');
+  await expect(page.locator('#document-status')).toContainText('Page 3');
+  await page.getByRole('tab', { name: 'one.pdf', exact: true }).click();
+  await expect(page.locator('#document-status')).toContainText('Page 2');
+  await expect.poll(() => page.evaluate(() => JSON.parse(sessionStorage.getItem('desktop-settings')).active_pdf_path)).toBe('/test/one.pdf');
+  await page.reload();
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  await expect(page.locator('#document-status')).toContainText('Page 2');
+  await expect(page.getByRole('tab', { name: 'one.pdf', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('tab', { name: 'two.pdf', exact: true }).click();
+  await expect(page.locator('#document-status')).toContainText('Page 3');
+  await page.getByRole('button', { name: 'Close one.pdf', exact: true }).click();
+  await expect(page.locator('#pdf-tabs')).toBeHidden();
+  await expect.poll(() => page.evaluate(() => JSON.parse(sessionStorage.getItem('desktop-settings')).open_pdf_paths)).toEqual(['/test/two.pdf']);
+  await page.reload();
+  await expect(page.locator('#filename')).toHaveText('two.pdf');
+  await expect(page.locator('#document-status')).toContainText('Page 3');
+  await expect(page.locator('#pdf-tabs')).toBeHidden();
+});
+
+test('startup restores accessible tabs when another saved PDF is missing', async ({ page }) => {
+  const bytes = [...readFileSync(fixture)];
+  await page.addInitScript(bytes => {
+    window.pdfBytes = bytes;
+    window.missingPath = '/test/missing.pdf';
+    window.restoreFiles = [{ name: 'missing.pdf', path: window.missingPath }, { name: 'reading.pdf', path: '/test/reading.pdf' }];
+    sessionStorage.setItem('desktop-settings', JSON.stringify({ open_pdf_paths: window.restoreFiles.map(file => file.path) }));
+  }, bytes);
+  await page.goto('/');
+  await expect(page.locator('#document-status')).toContainText('Page 1 of 3');
+  await expect(page.locator('#reader-error')).toContainText('missing.pdf');
+  await expect(page.locator('#filename')).toHaveText('reading.pdf');
+});
+
+test('tab switching and startup restore scroll position and support keyboard switching', async ({ page }) => {
+  const bytes = [...readFileSync(fixture)];
+  const files = [{ name: 'one.pdf', path: '/test/one.pdf' }, { name: 'two.pdf', path: '/test/two.pdf' }];
+  await page.addInitScript(({ bytes, files }) => {
+    window.pdfBytes = bytes;
+    window.pickFiles = [...files];
+    const saved = JSON.parse(sessionStorage.getItem('desktop-settings') || '{"zoom":1.5}');
+    sessionStorage.setItem('desktop-settings', JSON.stringify(saved));
+    window.restoreFiles = (saved.open_pdf_paths ?? []).map(path => files.find(file => file.path === path));
+  }, { bytes, files });
+  await page.goto('/');
+  await page.locator('#open').click();
+  await expect(page.locator('#next')).toBeEnabled();
+  await page.locator('#viewport').evaluate(element => { element.scrollTop = 120; });
+  await expect.poll(() => page.locator('#viewport').evaluate(element => element.scrollTop)).toBe(120);
+  await page.locator('#open').click();
+  await expect(page.getByRole('tab', { name: 'two.pdf', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#next')).toBeEnabled();
+  await page.getByRole('tab', { name: 'two.pdf', exact: true }).focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.getByRole('tab', { name: 'one.pdf', exact: true })).toBeFocused();
+  await expect(page.locator('#next')).toBeEnabled();
+  await expect.poll(() => page.locator('#viewport').evaluate(element => element.scrollTop)).toBe(120);
+  await page.reload();
+  await expect(page.getByRole('tab', { name: 'one.pdf', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#next')).toBeEnabled();
+  await expect.poll(() => page.locator('#viewport').evaluate(element => element.scrollTop)).toBe(120);
+  await page.screenshot({ path: 'test-results/pdf-tabs.png' });
+});
+
+test('switching tabs discards an old pending AI response', async ({ page }) => {
+  await openPDF(page);
+  await page.locator('#file').setInputFiles({ name: 'second.pdf', mimeType: 'application/pdf', buffer: readFileSync(fixture) });
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  await expect(page.locator('#next')).toBeEnabled();
+  await configure(page);
+  await page.evaluate(() => { window.holdAI = true; });
+  await page.locator('[data-scope="page"][data-action="summarize"]').click();
+  await expect(page.locator('#answer')).toContainText('Reading between');
+  await page.getByRole('tab', { name: 'reading.pdf', exact: true }).click();
+  await expect(page.locator('#next')).toBeEnabled();
+  await page.evaluate(() => window.releaseAI());
+  await expect(page.locator('#answer-card')).toBeHidden();
+  await expect(page.locator('#answer')).toHaveText('');
+  await expect(page.locator('[data-scope="page"][data-action="summarize"]')).toBeEnabled();
+});
+
+
+test('desktop close flushes the last scroll position before destroying the window', async ({ page }) => {
+  const bytes = [...readFileSync(fixture)];
+  await page.addInitScript(bytes => {
+    window.pdfBytes = bytes;
+    window.pickFiles = [{ name: 'reading.pdf', path: '/test/reading.pdf' }];
+    sessionStorage.setItem('desktop-settings', JSON.stringify({ zoom: 1.5 }));
+    window.testDesktopWindow = {
+      onCloseRequested: async callback => { window.requestDesktopClose = callback; },
+      onResized: async () => () => {},
+      isFullscreen: async () => false,
+      destroy: async () => { window.destroyedSettings = JSON.parse(sessionStorage.getItem('desktop-settings')); },
+    };
+  }, bytes);
+  await page.goto('/');
+  await page.locator('#open').click();
+  await expect(page.locator('#next')).toBeEnabled();
+  await page.locator('#viewport').evaluate(async element => {
+    element.scrollTop = 120;
+    await window.requestDesktopClose({ preventDefault() {} });
+  });
+  const saved = await page.evaluate(() => window.destroyedSettings);
+  expect(saved.open_pdf_paths).toEqual(['/test/reading.pdf']);
+  expect(saved.active_pdf_path).toBe('/test/reading.pdf');
+  expect(saved.reading_positions[0].scroll_top).toBe(120);
+  await page.evaluate(async () => {
+    window.destroyedSettings = null;
+    window.failSave = true;
+    await window.requestDesktopClose({ preventDefault() {} });
+  });
+  await expect(page.locator('#reader-error')).toContainText('Close again');
+  expect(await page.evaluate(() => window.destroyedSettings)).toBeNull();
+  await page.evaluate(() => window.requestDesktopClose({ preventDefault() {} }));
+  expect(await page.evaluate(() => window.destroyedSettings.open_pdf_paths)).toEqual(['/test/reading.pdf']);
 });

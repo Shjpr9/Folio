@@ -5,6 +5,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { captureContext, captureAvailableContexts, pageText, selectionText } from './context.js';
 import { createSettingsStore, defaultSettings, documentKey, effectiveTheme, lastPage, rememberPage } from './settings.js';
 import { handleReaderKey, handleRecolorKey, handleFullscreenKey } from './keyboard.js';
+import { createSpeechPlayer } from './tts.js';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const markdown = new MarkdownIt({ html: false }).disable('image');
@@ -35,6 +36,87 @@ let nativeOpening = false;
 let readerFullscreen = false;
 let fullscreenChanging = false;
 const desktopWindow = window.__TAURI__?.window?.getCurrentWindow();
+const speechInvoke = (command, args) => {
+  if (!window.__TAURI__?.core) return Promise.reject(new Error('Read aloud is available in the desktop app.'));
+  return window.__TAURI__.core.invoke(command, args);
+};
+let speechInstalling = false;
+let speechInstallVersion = 0;
+const speech = createSpeechPlayer({
+  prepare: async isCurrent => {
+    const status = await refreshSpeechPack();
+    if (!isCurrent()) return false;
+    if (status.installed) return true;
+    if ($('answer-dialog').open) $('answer-dialog').close();
+    await showSettings();
+    return false;
+  },
+  begin: () => speechInvoke('tts_begin'),
+  synthesize: (text, generation) => speechInvoke('tts_synthesize', { text, generation }),
+  stopEngine: () => speechInvoke('tts_stop'),
+  onChange: state => {
+    $('speech-player').hidden = state.phase === 'idle';
+    $('speech-status').textContent = state.phase === 'error' ? state.error
+      : `${state.label} · ${state.phase === 'preparing' ? 'Preparing audio…' : state.phase === 'paused' ? 'Paused' : 'Reading'}${state.total ? ` · ${state.index}/${state.total}` : ''}`;
+    $('speech-pause').textContent = state.phase === 'paused' ? 'Resume' : 'Pause';
+    $('speech-pause').disabled = state.phase === 'error';
+    $('speech-stop').textContent = state.phase === 'error' ? 'Dismiss' : 'Stop';
+  },
+});
+document.querySelector('.reader').append($('speech-home'));
+
+async function refreshSpeechPack() {
+  const status = await speechInvoke('tts_status');
+  const downloading = speechInstalling || status.phase === 'installing';
+  const megabytes = value => (value / 1_000_000).toFixed(1);
+  $('speech-install').hidden = status.installed || downloading;
+  $('speech-install').disabled = !status.supported;
+  $('speech-install').textContent = `Download read aloud · ${megabytes(status.total)} MB`;
+  $('speech-remove').hidden = !status.installed || downloading;
+  $('speech-cancel').hidden = !downloading;
+  $('speech-progress').hidden = !downloading;
+  $('speech-progress').value = status.total ? Math.min(100, status.downloaded / status.total * 100) : 0;
+  $('speech-pack-status').textContent = !status.supported ? 'Read aloud is not available for this operating system or CPU yet.'
+    : downloading ? `${status.message || 'Downloading read aloud…'} ${megabytes(status.downloaded)} / ${megabytes(status.total)} MB`
+    : status.installed ? 'English · Alba installed. Ready to read offline.' : 'Download once to read selections and answers aloud. No account needed.';
+  return status;
+}
+async function readAloud(text, label) {
+  await speech.play(text, label);
+}
+$('speak-selection').addEventListener('mousedown', event => event.preventDefault());
+$('speak-selection').addEventListener('click', () => readAloud(reader.selection, `Selection · Page ${reader.page}`));
+$('speak-answer').addEventListener('click', () => readAloud($('answer').innerText, $('answer-kind').textContent));
+$('speech-pause').addEventListener('click', () => speech.state.phase === 'paused' ? speech.resume() : speech.pause());
+$('speech-stop').addEventListener('click', () => speech.stop());
+$('speech-rate').addEventListener('change', event => speech.setRate(Number(event.target.value)));
+$('speech-install').addEventListener('click', async () => {
+  if (speechInstalling) return;
+  speechInstalling = true;
+  const version = ++speechInstallVersion;
+  $('speech-install').hidden = true;
+  $('speech-cancel').hidden = false;
+  $('speech-progress').hidden = false;
+  $('speech-pack-status').textContent = 'Preparing download…';
+  errorAt('speech-setup-error');
+  const poll = setInterval(() => refreshSpeechPack().catch(() => {}), 500);
+  try { await refreshSpeechPack(); if (version === speechInstallVersion) await speechInvoke('tts_install'); }
+  catch (error) { if (version === speechInstallVersion) errorAt('speech-setup-error', String(error)); }
+  finally { clearInterval(poll); speechInstalling = false; await refreshSpeechPack().catch(error => errorAt('speech-setup-error', error)); }
+});
+$('speech-cancel').addEventListener('click', async () => {
+  ++speechInstallVersion;
+  $('speech-cancel').disabled = true;
+  try { await speechInvoke('tts_cancel_install'); }
+  catch (error) { errorAt('speech-setup-error', String(error)); }
+  finally { $('speech-cancel').disabled = false; }
+});
+$('speech-remove').addEventListener('click', async () => {
+  $('speech-remove').disabled = true;
+  try { await speech.stop(); await speechInvoke('tts_remove'); await refreshSpeechPack(); }
+  catch (error) { errorAt('speech-setup-error', String(error)); }
+  finally { $('speech-remove').disabled = false; }
+});
 
 function errorAt(id, error = '') {
   $(id).textContent = typeof error === 'string' ? error : error.message || String(error);
@@ -64,6 +146,9 @@ function updateControls() {
   $('question').disabled = busy;
   $('copy').disabled = busy || !$('answer').textContent;
   $('expand-answer').disabled = $('copy').disabled;
+  $('speak-answer').disabled = $('copy').disabled;
+  $('speak-selection').disabled = !ready || !reader.selection;
+  $('speak-context-selection').disabled = !ready || !menuSources?.selection;
   $('pdf-fullscreen').disabled = !readerFullscreen && !ready;
 }
 
@@ -179,6 +264,7 @@ function saveSession() {
 }
 
 async function activateTab(tab, cancelLoad = true) {
+  speech.stop();
   capturePosition();
   if (cancelLoad) {
     ++loadVersion;
@@ -214,6 +300,7 @@ async function closeTab(tab) {
   if (tab === reader) {
     if (tabs.length) await activateTab(tabs[Math.min(index, tabs.length - 1)]);
     else {
+      speech.stop();
       ++loadVersion;
       ++renderVersion;
       ++aiVersion;
@@ -358,6 +445,10 @@ async function showSettings() {
   $('reopen-last-pdf').checked = settings.reopen_last_pdf;
   errorAt('settings-error');
   $('settings-dialog').showModal();
+  refreshSpeechPack().catch(error => {
+    $('speech-pack-status').textContent = String(error?.message || error);
+    $('speech-install').disabled = true;
+  });
 }
 
 function validateSettings(input) {
@@ -372,6 +463,7 @@ function validateSettings(input) {
 
 async function runAI(action, source, question = '', popup = false) {
   if (busy) return;
+  speech.stop();
   if (!settings.endpoint_url || !settings.model) {
     errorAt(readerFullscreen ? 'reader-error' : 'ai-error', 'Connect your AI provider, then choose the action again.');
     showSettings();
@@ -525,12 +617,14 @@ function showAnswerPopup(includeQuestion = false) {
   $('answer-dialog-title').textContent = includeQuestion ? 'Ask about PDF' : 'AI response';
   if (includeQuestion) $('expanded-content').prepend($('question-form'));
   $('expanded-content').append($('ai-error'), $('answer-card'));
+  $('answer-dialog').append($('speech-player'));
   if (!$('answer-dialog').open) $('answer-dialog').showModal();
   $('expanded-content').scrollTop = 0;
 }
 $('expand-answer').addEventListener('click', () => showAnswerPopup());
 $('close-answer').addEventListener('click', () => $('answer-dialog').close());
 $('answer-dialog').addEventListener('close', () => {
+  $('speech-home').append($('speech-player'));
   $('answer-area').before($('question-form'), $('ai-error'));
   $('answer-area').append($('answer-card'));
   (readerFullscreen ? $('viewport') : $('answer-card').hidden ? $('question') : $('expand-answer')).focus();
@@ -540,6 +634,12 @@ function hideContextMenu() {
   $('pdf-context-menu').hidden = true;
   menuSources = null;
 }
+$('speak-context-selection').addEventListener('mousedown', event => event.preventDefault());
+$('speak-context-selection').addEventListener('click', () => {
+  const source = menuSources?.selection;
+  hideContextMenu();
+  if (source) readAloud(source.text, source.label);
+});
 $('viewport').addEventListener('contextmenu', event => {
   if (!readerFullscreen || !reader.pdf) return;
   event.preventDefault();
@@ -571,7 +671,7 @@ $('viewport').addEventListener('scroll', hideContextMenu);
 window.addEventListener('resize', hideContextMenu);
 window.addEventListener('blur', hideContextMenu);
 $('pdf-context-menu').addEventListener('keydown', event => {
-  const items = menuActions.filter(button => !button.disabled);
+  const items = [...menuActions, $('speak-context-selection')].sort((a, b) => a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1).filter(button => !button.disabled);
   const index = items.indexOf(document.activeElement);
   let next;
   if (event.key === 'ArrowDown') next = index < 0 ? 0 : (index + 1) % items.length;
@@ -626,6 +726,7 @@ $('viewport').addEventListener('scroll', () => {
 });
 if (desktopWindow?.onCloseRequested) desktopWindow.onCloseRequested(async event => {
   event.preventDefault();
+  await speech.stop();
   if (closeSaveFailed) { await desktopWindow.destroy(); return; }
   clearTimeout(positionTimer);
   capturePosition();

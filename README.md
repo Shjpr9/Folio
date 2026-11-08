@@ -75,6 +75,28 @@ Reading positions are remembered for the 100 most recently opened PDFs, identifi
 
 The question box and each answer show their source page. Navigating after choosing **Ask** keeps that original source, even if the displayed page changes. Select **Ask page** again to ask about the new page.
 
+## Read aloud (optional download)
+
+On Linux, WebKit audio playback also needs GStreamer's good plugins. On Arch Linux, install them with `sudo pacman -S --needed gst-plugins-good`, then fully close and reopen Folio. Missing plugins can produce `GStreamer element autoaudiosink not found` and subsequent GLib errors even when the speech model is installed correctly.
+
+Folio's base executable does not include a speech engine or model. Open **Settings → Read aloud** and choose **Download read aloud** to install Pocket TTS and the **English · Alba** voice. On Linux x86_64 the download is approximately **234 MB**; installed files occupy approximately **250 MB**. The exact download size is shown before installation. No account, Python installation, GPU, or AI-provider configuration is required.
+
+Select PDF text and choose **Read selection aloud**, or click the speaker button beside a completed summary or answer. The same controls work in expanded answers and the fullscreen selection menu. Playback provides pause/resume, stop, and speed from 0.75× to 2×. Preparing the first audio loads the model; subsequent chunks reuse the same process. Stop, completion, switching documents, and app exit release the engine. Pausing keeps it loaded.
+
+Downloads come from pinned Pocket TTS GitHub releases and Hugging Face model revisions. Folio checks every download's size and SHA-256 before installation; progress, cancellation, retry, and **Remove read aloud** are available in Settings. Failed or cancelled downloads do not become installed voices. Setup requires internet access; synthesis uses local files and works offline afterwards. Selected text and answers are sent only to an app-managed process bound to loopback, never to a cloud speech provider.
+
+Speech files are stored under `tts/` in Tauri's app data directory, separate from `settings.json`. On Linux this is normally `~/.local/share/local.folio.reader/tts/` (or under `$XDG_DATA_HOME`). Removal deletes the optional runtime and voice pack without changing PDFs or provider settings. Downloading the pack again is required to restore narration.
+
+The initial pack supports English only. It reads extracted PDF text and completed answers, up to 120,000 characters per playback request. Image-only pages still need OCR. Supported runtime targets are Linux x86_64/ARM64, macOS Intel/Apple Silicon, and Windows x86_64. Runtime compatibility on each target depends on upstream Pocket TTS binaries. The engine is licensed under MIT; [Pocket TTS](https://github.com/kyutai-labs/pocket-tts) and [voice/model information](https://huggingface.co/kyutai/pocket-tts-without-voice-cloning) describe the downloaded assets.
+
+For an optional real-runtime integration check after downloading the fixture assets:
+
+```sh
+FOLIO_TTS_SMOKE_DIR=/path/to/verified/fixture cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --test tts real_optional_runtime -- --ignored
+```
+
+The fixture contains the pinned Linux `engine.tar.gz`, `model.safetensors`, `voice.safetensors`, and `tokenizer.json`; normal tests do not download model files.
+
 ## Provider settings
 
 Use an OpenAI-compatible Chat Completions API with a text response at `choices[0].message.content`. The client uses non-streaming `POST` requests with `model` and `messages`, and Bearer authentication when a key is supplied. See the [Chat Completions API reference](https://developers.openai.com/api/reference/resources/chat).

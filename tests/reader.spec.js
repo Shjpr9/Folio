@@ -37,6 +37,8 @@ test.beforeEach(async ({ page }) => {
     window.sentRequests = [];
     window.nativeRestores = 0;
     window.__TAURI__ = { window: { getCurrentWindow: () => window.testDesktopWindow }, core: { invoke: async (command, args) => {
+      if (command === 'tts_stop') return;
+      if (command === 'tts_status') return { supported: false, installed: false, phase: 'idle', total: 0, downloaded: 0 };
       if (command === 'choose_pdf') return window.pickFiles?.shift() ?? null;
       if (command === 'restore_pdf') {
         window.nativeRestores++;

@@ -17,6 +17,13 @@ rfd = { version = "0.15", optional = true, default-features = false, features = 
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
+tokio = { version = "1", features = ["sync", "time", "macros"] }
+
+[target.'cfg(windows)'.dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
@@ -25,3 +32,9 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 name = "folio"
 required-features = ["desktop"]
 path = "src/main.rs"
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = true
